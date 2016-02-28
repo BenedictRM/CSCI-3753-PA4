@@ -1,26 +1,14 @@
 /*
-  FUSE: Filesystem in Userspace
-  Copyright (C) 2001-2007  Miklos Szeredi <miklos@szeredi.hu>
-
-  Minor modifications and note by Andy Sayler (2012) <www.andysayler.com>
-
-  Source: fuse-2.8.7.tar.gz examples directory
-  http://sourceforge.net/projects/fuse/files/fuse-2.X/
-
-  This program can be distributed under the terms of the GNU GPL.
-  See the file COPYING.
-
-  gcc -Wall `pkg-config fuse --cflags` fusexmp.c -o fusexmp `pkg-config fuse --libs`
-
-  Note: This implementation is largely stateless and does not maintain
-        open file handels between open and release calls (fi->fh).
-        Instead, files are opened and closed as necessary inside read(), write(),
-        etc calls. As such, the functions that rely on maintaining file handles are
-        not implmented (fgetattr(), etc). Those seeking a more efficient and
-        more complete implementation may wish to add fi->fh support to minimize
-        open() and close() calls and support fh dependent functions.
-
-*/
+ * File: pa4-encfs.c
+ * Author: Russell Mehring with program start based on Andy Sayler's work
+ * and assistance on xmp_read and xmp_write functions from Miles Rufat-Latre
+ * Project: CSCI 3753 Programming Assignment 4
+ * Create Date: 04/16/2014
+ * Modify Date: 04/24/2014
+ * Description:
+ * 	This file contains an encrypting solution to the assignment
+ *  
+ */
 
 #define FUSE_USE_VERSION 28
 #define HAVE_SETXATTR
@@ -71,6 +59,20 @@ struct bb_state {
     char *passPhrase;
 };
 
+char* tmp_path(const char* old_path, const char *suffix){
+    char* new_path;
+    int len=0;
+    len=strlen(old_path) + strlen(suffix) + 1;
+    new_path = malloc(sizeof(char)*len);
+    if(new_path == NULL){
+        return NULL;
+    }
+    new_path[0] = '\0';
+    strcat(new_path, old_path);
+    strcat(new_path, suffix);
+    return new_path;
+}
+
 #define BB_DATA ((struct bb_state *) fuse_get_context()->private_data)
 
 static void bb_fullpath(char fpath[PATH_MAX], const char *path)
@@ -80,7 +82,7 @@ static void bb_fullpath(char fpath[PATH_MAX], const char *path)
 }
 
 static int xmp_getattr(const char *path, struct stat *stbuf)
-{
+{		 	
 	int res = 0;
     char fpath[PATH_MAX];
     
@@ -123,7 +125,6 @@ static int xmp_readlink(const char *path, char *buf, size_t size)
 	buf[res] = '\0';
 	return 0;
 }
-
 
 static int xmp_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		       off_t offset, struct fuse_file_info *fi)
@@ -334,6 +335,50 @@ static int xmp_open(const char *path, struct fuse_file_info *fi)
 static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
 		    struct fuse_file_info *fi)
 {      
+      int res;
+	  FILE *file; 
+	  FILE *memoryfile;
+	  char fpath[PATH_MAX];
+	  ssize_t xattr_len;
+	  char *memtext;
+	  size_t memsize; 
+	  char do_cryptVal[8];
+	  int crypt_action = DONOTHING;
+	
+	  bb_fullpath(fpath, path);
+	
+	  (void) fi;
+	
+	  file = fopen(fpath, "r");
+	  
+	  if (file == NULL)
+	    return -errno;
+	
+	  memoryfile = open_memstream(&memtext, &memsize);
+	  
+	  if (memoryfile == NULL)
+	    return -errno;
+	
+	  xattr_len = getxattr(fpath, XATTR_ENCRYPTED_FLAG, do_cryptVal, 8);
+	  //check if file to read has been encrypted
+	  if (xattr_len != -1 && !memcmp(do_cryptVal, ENCRYPTED, 4)){
+	      crypt_action = DECRYPT;
+	  }
+	
+	  do_crypt(file, memoryfile, crypt_action, BB_DATA->passPhrase);
+	  fclose(file);
+	  
+	  //Force open memory file to write while open
+	  fflush(memoryfile);
+	  fseek(memoryfile, offset, SEEK_SET);
+	  res = fread(buf, 1, size, memoryfile);
+	  
+	  if (res == -1)
+	    res = -errno;
+	
+	  fclose(memoryfile);
+	
+	  return res;
     /*
     //Void out unused params
     (void) fi;
@@ -344,7 +389,7 @@ static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
     //Set initial crypt action to a pass through (dont know if encrypted or not)
     int crypt_action = DONOTHING;
     ssize_t valsize = 0;
-    char *do_cryptVal = NULL;
+    char *do_cryptVal[8];
     FILE *inFile = NULL;
     FILE *outFile = NULL;
     
@@ -352,7 +397,7 @@ static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
     
     //Get xattributes to check if encrypted or not
 	xattrVal = getxattr(fpath, XATTR_ENCRYPTED_FLAG, NULL, 0);
-	do_cryptVal = malloc(sizeof(*do_cryptVal)*(valsize));
+
 	valsize = getxattr(fpath, XATTR_ENCRYPTED_FLAG, do_cryptVal, valsize);
 	
 	//getattr calls lgetxattr which if false returns -1, i.e. unencrypted
@@ -403,7 +448,7 @@ static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
 	fclose(outFile);
 	
 	return res;
-		*/
+	*/
     /*
     int fd;
 	int res;
@@ -422,122 +467,192 @@ static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
 
 	close(fd);
 	return res;	
-	*/
-  int res;
-  FILE *f, *memfile;
-  char fpath[PATH_MAX];
-  char *memtext;
-  size_t memsize;
-  int crypt_action = DONOTHING;
-  char xattr_value[8];
-  ssize_t xattr_len;
-
-  bb_fullpath(fpath, path);
-
-  (void) fi;
-
-  f = fopen(fpath, "r");
-  if (f == NULL)
-    return -errno;
-
-  memfile = open_memstream(&memtext, &memsize);
-  if (memfile == NULL)
-    return -errno;
-
-  xattr_len = getxattr(fpath, XATTR_ENCRYPTED_FLAG, xattr_value, 8);
-  if (xattr_len != -1 && !memcmp(xattr_value, ENCRYPTED, 4)){
-    crypt_action = DECRYPT;
-  }
-
-  do_crypt(f, memfile, crypt_action, BB_DATA->passPhrase);
-  fclose(f);
-
-  fflush(memfile);
-  fseek(memfile, offset, SEEK_SET);
-  res = fread(buf, 1, size, memfile);
-  if (res == -1)
-    res = -errno;
-
-  fclose(memfile);
-
-  return res;
+	*/		  
 }
 
 static int xmp_write(const char *path, const char *buf, size_t size,
 		     off_t offset, struct fuse_file_info *fi)
-{
-	(void) fi;
-	int fd;
-	int res;
-	int crypt_action = DONOTHING;
-	char *do_cryptVal = NULL;
-    char fpath[PATH_MAX];
-    int xattrVal = 0;
-    
-	bb_fullpath(fpath, path);
-    
-	//Check if file encrypted or not:
-	//Unencrypted case
-	if (xattrVal < 0 || memcmp(do_cryptVal, "false", 5) == 0){
-		printf("Write file unencrypted, leave pass through value\n");
-	}
-	//Encrypted case
-	else if(memcmp(do_cryptVal, ENCRYPTED,4)==0){
-		printf("File encrypted\n");
-		crypt_action = DECRYPT;
-	}
-	
-    if (crypt_action == DECRYPT)
-    {
-		printf("File encrypted decrypt\n");
-		FILE *inFile = NULL;
-        FILE *outFile = NULL;
-        
-        //Open files
-	    inFile = fopen(buf, "rb");
-	    if(!inFile){
-		    perror("infile fopen error");
-			return EXIT_FAILURE;
-	    }
-	    
-	    outFile = fopen(fpath, "wb+");
-	    if(!outFile){
-			perror("outfile fopen error");
-			return EXIT_FAILURE;
-	    }
-        if(!do_crypt(inFile, outFile, DECRYPT, BB_DATA->passPhrase)){
-		     fprintf(stderr, "WRITE: do_crypt failed\n");
-	    }
+{		
+		int res;
+	    FILE *file; 
+	    FILE *memoryfile;
+	    char fpath[PATH_MAX];
+	    ssize_t xattr_len;
+	    char *memtext;
+	    size_t memsize; 
+	    char do_cryptVal[8];
+	    int crypt_action = DONOTHING;
 		
-		res = pwrite(fileno(outFile), buf, size, offset);
-		if (res == -1)
-			res = -errno;
-	    
-	   //Encrypt the contents
-		if(!do_crypt(outFile, inFile, ENCRYPT, BB_DATA->passPhrase)){
-		     fprintf(stderr, "WRITE: do_crypt failed\n");
+		//Call bb_fullpath to set new mirror file path				
+		bb_fullpath(fpath, path);
+		
+		(void) fi;
+		
+		file = fopen(fpath, "r");
+		if (file == NULL){		
+		   return -errno;
+	    } 
+		
+		memoryfile = open_memstream(&memtext, &memsize);
+        if (memoryfile == NULL){
+		    return -errno;
 		}
+		
+		xattr_len = getxattr(fpath, XATTR_ENCRYPTED_FLAG, do_cryptVal, 8);
+		if (xattr_len != -1 && !memcmp(do_cryptVal, ENCRYPTED, 4)){
+		    crypt_action = DECRYPT;
+		}
+		
+		//Call do_crypt to perform encryption/decryption on file to write
+		do_crypt(file, memoryfile, crypt_action, BB_DATA->passPhrase);
+		
+		fclose(file);
+		
+		fseek(memoryfile, offset, SEEK_SET);
+		res = fwrite(buf, 1, size, memoryfile);
+		  
+		if (res == -1){
+		    res = -errno;
+		}
+		//Force file to write while open  
+		fflush(memoryfile);
+		
+		if (crypt_action == DECRYPT) {
+		    crypt_action = ENCRYPT;
+		}
+		
+		file = fopen(fpath, "w");
+		fseek(memoryfile, 0, SEEK_SET);
+		
+		//Now re-encrypt the file that was being written to 
+		do_crypt(memoryfile, file, crypt_action, BB_DATA->passPhrase);
+		
+		fclose(memoryfile);
+		fclose(file);
+		
+		return res;
+		/*
+		(void) fi;
+		int fd;
+		int res;
+		int crypt_action = DONOTHING;
+		char do_cryptVal[8];
+	    char fpath[PATH_MAX];
+	    int xattrVal = 0;
 	    
-	    fclose(inFile);
-	    fclose(outFile);
-	}
-	//Unencrypted case
-	else if (crypt_action == DONOTHING)
-	{
-	     //File is unencrypted
-
-		fd = open(fpath, O_WRONLY);
-		if (fd == -1)
-			return -errno;
-
-		res = pwrite(fd, buf, size, offset);
-		if (res == -1)
-			res = -errno;
-
-		close(fd);	
-	}
+		bb_fullpath(fpath, path);
+	    
+		//Check if file encrypted or not:
+		//Unencrypted case
+		if (xattrVal < 0 || memcmp(do_cryptVal, "false", 5) == 0){
+			printf("Write file unencrypted, leave pass through value\n");
+		}
+		//Encrypted case
+		else if(memcmp(do_cryptVal, ENCRYPTED,4)==0){
+			printf("File encrypted\n");
+			crypt_action = DECRYPT;
+		}
+		
+	    if (crypt_action == DECRYPT)
+	    {
+			printf("File encrypted decrypt\n");
+			FILE *inFile = NULL;
+	        FILE *outFile = NULL;
+	        
+	        //Open files
+		    inFile = fopen(buf, "rb");
+		    if(!inFile){
+			    perror("infile fopen error");
+				return EXIT_FAILURE;
+		    }
+		    
+		    outFile = fopen(fpath, "wb+");
+		    if(!outFile){
+				perror("outfile fopen error");
+				return EXIT_FAILURE;
+		    }
+	        if(!do_crypt(inFile, outFile, DECRYPT, BB_DATA->passPhrase)){
+			     fprintf(stderr, "WRITE: do_crypt failed\n");
+		    }
+			
+			res = pwrite(fileno(outFile), buf, size, offset);
+			if (res == -1)
+				res = -errno;
+		    
+		   //Encrypt the contents
+			if(!do_crypt(outFile, inFile, ENCRYPT, BB_DATA->passPhrase)){
+			     fprintf(stderr, "WRITE: do_crypt failed\n");
+			}
+		    
+		    fclose(inFile);
+		    fclose(outFile);
+		}
+		//Unencrypted case
+		else if (crypt_action == DONOTHING)
+		{
+		     //File is unencrypted
+	
+			fd = open(fpath, O_WRONLY);
+			if (fd == -1)
+				return -errno;
+	
+			res = pwrite(fd, buf, size, offset);
+			if (res == -1)
+				res = -errno;
+	
+			close(fd);	
+		}
 	
 	return res;
+    */
+	/*
+	  int res;
+	  char fpath[PATH_MAX];
+	  FILE *f, *memfile;
+	  char *memtext;
+	  size_t memsize;
+	  int crypt_action = DONOTHING;
+	  char do_cryptVal[8];
+	  ssize_t xattr_len;
+	
+	  bb_fullpath(fpath, path);
+	
+	  (void) fi;
+	
+	  f = fopen(fpath, "r");
+	  if (f == NULL)
+	    return -errno;
+	
+	  memfile = open_memstream(&memtext, &memsize);
+	  if (memfile == NULL)
+	    return -errno;
+	
+	  xattr_len = getxattr(fpath, XATTR_ENCRYPTED_FLAG, do_cryptVal, 8);
+	  if (xattr_len != -1 && !memcmp(do_cryptVal, ENCRYPTED, 4)){
+	    crypt_action = DECRYPT;
+	  }
+	
+	  do_crypt(f, memfile, crypt_action, BB_DATA->passPhrase);
+	  fclose(f);
+	
+	  fseek(memfile, offset, SEEK_SET);
+	  res = fwrite(buf, 1, size, memfile);
+	  if (res == -1)
+	    res = -errno;
+	  fflush(memfile);
+	  //Encrypt the edited file
+	  if (crypt_action == DECRYPT) {
+	    crypt_action = ENCRYPT;
+	  }
+	
+	  f = fopen(fpath, "w");
+	  fseek(memfile, 0, SEEK_SET);
+	  do_crypt(memfile, f, crypt_action, BB_DATA->passPhrase);
+	
+	  fclose(memfile);
+	  fclose(f);
+	
+	  return res;*/	 	  
 }
 
 static int xmp_statfs(const char *path, struct statvfs *stbuf)
@@ -554,7 +669,9 @@ static int xmp_statfs(const char *path, struct statvfs *stbuf)
 	return 0;
 }
 
-static int xmp_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
+static int xmp_create(const char* path, mode_t mode, struct fuse_file_info* fi) 
+{  
+    //void out unused paramaters
     (void) fi;
     (void) mode;
     char fpath[PATH_MAX];
@@ -582,7 +699,6 @@ static int xmp_release(const char *path, struct fuse_file_info *fi)
 {
 	/* Just a stub.	 This method is optional and can safely be left
 	   unimplemented */
-
 	(void) path;
 	(void) fi;
 	return 0;
@@ -709,8 +825,7 @@ int main(int argc, char *argv[])
 	    perror("main calloc");
 	    abort();
     }
-    
-    
+       
     //Malloc the data pointer
     //xmp_data = malloc(sizeof(struct xmp_state));
     
@@ -719,6 +834,7 @@ int main(int argc, char *argv[])
     bb_data->rootdir = realpath(argv[argc-2], NULL);//Set root directory
     bb_data->passPhrase = argv[argc-3];//set passPhrase
     
+    //Move arguments into place so referencing is done correctly
     argv[argc-3] = argv[argc-1];
     argv[argc-2] = argv[argc-1];
     argv[argc-1] = NULL;

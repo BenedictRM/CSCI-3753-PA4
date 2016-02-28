@@ -1,0 +1,77 @@
+CS3753 (Operating Systems)
+Spring 2014
+University of Colorado Boulder
+Programming Assignment 4
+Private Code
+By Russell Mehring
+
+By Andy Sayler - 2012
+<www.andysayler.com>
+
+Inspired by work from Chris Wailes - 2010
+<chris.wailes@gmail.com>
+
+With help from:
+Junho Ahn - 2012
+
+Updated by Mike Gartrell - 2014
+
+Various files adopted from other exiting work.
+See file comments for specific details and references.
+
+---Dependencies (all included in cu-cs-csci3753 package)---
+fuse-utils
+openssl
+attr
+attr-dev
+libfuse-dev
+libssl1.0.0 or libssl0.9.8
+libssl-dev
+
+Note: To use extended attributes (xattr) on EXT filesystems,
+      you must add the 'user_xattr' mount option to the
+      mount options of any mounts on which you intend to use 
+      extended attributes. Failure to so may result in an error
+      when trying to set, get, or remove xattr values.
+
+---Folders---
+rootdir - a directory with which to mirror
+mountdir - an empty directory which rootdir mounts to
+
+---Files---
+Makefile         - GNU makefile to build all relevant code
+README           - This file
+pa4-encfs.c      - Implementation of a mirroring file system using FUSE conmbined with encryption funcitonality
+                 - Assistance on xmp_read and xmp_write functions from Miles Rufat-Letre
+aes-crypt.h      - Basic AES file encryption library interface
+aes-crypt.c      - Basic AES file encryption library implementation
+
+---Executables---
+pa4-encfs        - a mounting file system, utilizes FUSE and encryption
+
+---Examples---
+
+***Building***
+
+Build All:
+ make
+
+Clean:
+ make clean
+
+***FUSE Examples***
+
+Mount a rootdirectory on new directory
+ ./pa4-encfs <Password> <Root Point> <Mount Point>
+ ./fusehello <Mount Point>
+
+Unmount a FUSE filesystem
+ fusermount -u <Mount Point>
+
+Running pa4-encfs
+Creating a file in <Mount Point> - touch <FILE NAME>
+Editing a file in <Mount Point> - echo > <FILE NAME> <text>
+
+please note that gedit and other text editors have a different interface than what this
+implementation of FUSE was written to support and do not work, can only edit files in 
+<Mount Point> with echo.
